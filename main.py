@@ -1,5 +1,8 @@
 from collection import LockInAmplifier
-from processing import CoilSignals, HysCurve
+from processing import reconstruct
+import pandas as pd
+import numpy as np
+
 import matplotlib.pyplot as plt
 
 print("Please write filename (without any extension)")
@@ -15,64 +18,66 @@ zhinst = LockInAmplifier()
 # filename = f'FieldCal {cap}.txt'
 # zhinst.calibrate_field('data/'+filename, 'COM6', capacitance=cap)
 
-
-# zhinst.daq.setInt(f'/dev6832/demods/0/harmonic', 1)
-# zhinst.daq.setInt('/dev6832/demods/0/phaseadjust', 1)
-
 # Blank measurement
 Rc, Pc, fc, Rp, Pp, fp = zhinst.retrieve_signals()
-
-# Adjusting phase shift between pick-up coil and control coil
-# shift = Pp[0] - Pc
-# Pp[0] = Pc
-
-# print(f"Control phase before reconstuction: {Pc}")
-# print(f"Pickup phase before reconstuction: {Pp[0]}")
-
-Vc = zhinst._reconstruct(Rc, Pc, [fc], control_coil=True)
-Vp = -zhinst._reconstruct(Rp, Pp, fp)
-blank = CoilSignals(zhinst.t, Vp, Vc, zhinst.freq)
-
-# plt.plot(tc, Vp)
-# plt.plot(tc, Vc)
-# plt.show()
-
 
 print('Press enter when sample is positioned...')
 input()
 
 RcS, PcS, fcS, RpS, PpS, fpS = zhinst.retrieve_signals()
 
-# PpS[0] = PpS[0]-shift
+harmonic_frequency = zhinst.freq
 
-VcS = zhinst._reconstruct(RcS, PcS, [fcS], control_coil=True)
-VpS = -zhinst._reconstruct(RpS, PpS, fpS)
-sample = CoilSignals(zhinst.t, VpS, VcS, zhinst.freq)
+# Combining the data into a pandas DataFrame that is saved
+data = {
+    'Blank Control Frequency': fc,
+    'Blank Control R': Rc,
+    'Blank Control P': Pc,
+    'Blank Pickup Frequency': fp,
+    'Blank Pickup R': Rp,
+    'Blank Pickup P': Pp,
+    'Sample Control Frequency': fcS,
+    'Sample Control R': RcS,
+    'Sample Control P': PcS,
+    'Sample Pickup Frequency': fpS,
+    'Sample Pickup R': RpS,
+    'Sample Pickup P': PpS,
+}
 
-freq = zhinst.freq
+df = pd.DataFrame({key: pd.Series(value) for key, value in data.items()})
+df.to_csv('data/'+filename+'.csv')
 
-header = "Blank Time\tBlank Pickup\tBlank Control\tSample Time\tSample Pickup\tSample Control\n"
-with open(f'data/{filename}.txt', 'w') as f:
-    f.write(f'# Frequency\t{freq}\n')
-    f.write(header)
-    for i in range(blank.t.size):
-        row = f'{blank.t[i]}\t{blank.Vp[i]}\t{blank.Vc[i]}\t{sample.t[i]}\t{sample.Vp[i]}\t{sample.Vc[i]}\n'
-        f.write(row)
+
+
+VpS = reconstruct(df['Sample Pickup Frequency'].values, df['Sample Pickup R'].values,
+                  df['Sample Pickup P'].values, lambda f: 1, lambda f:0)
+Vp = reconstruct(df['Blank Pickup Frequency'].values, df['Blank Pickup R'].values,
+                 df['Blank Pickup P'].values, lambda f: 1, lambda f:0)
+VcS = reconstruct(df['Sample Control Frequency'].values, df['Sample Control R'].values,
+                  df['Sample Control P'].values, lambda f: 1, lambda f:0, control_coil=True)
+Vc = reconstruct(df['Blank Control Frequency'].values, df['Blank Control R'].values,
+                 df['Blank Control P'].values, lambda f: 1, lambda f:0, control_coil=True)
+
+t_plot = np.linspace(0, 8/zhinst.freq, 8000)
+# Blank compensation
+m = -VpS(t_plot) + Vp(t_plot)
+H = VcS(t_plot)
+
+# Offset Correction
+m = m - np.mean(m)
+H = H - np.mean(H)
 
 fig, axs = plt.subplots(3, 1)
 ax, ax2, ax3 = axs
 
-H = HysCurve(sample, blank, 1, 1)
-
-ax.plot(H.X, H.Y)
+ax.plot(H, m)
 
 ax2twin = ax2.twinx()
-import numpy as np
-t_plot = np.linspace(0, 8/zhinst.freq, 8000)
-ax2.plot(t_plot, np.tile(VpS, 8), label='Pickup Sample', c='C0')
-ax2twin.plot(t_plot, np.tile(VcS, 8), label='Field Sample', c='C1')
-ax2.plot(t_plot, np.tile(Vp,8), label='Pickup Blank', c='C2')
-ax2twin.plot(t_plot, np.tile(Vc, 8), label='Field Blank', c='C3')
+
+ax2.plot(t_plot, VpS(t_plot), label='Pickup Sample', c='C0')
+ax2twin.plot(t_plot, VcS(t_plot), label='Field Sample', c='C1')
+ax2.plot(t_plot, Vp(t_plot), label='Pickup Blank', c='C2')
+ax2twin.plot(t_plot, Vc(t_plot), label='Field Blank', c='C3')
 
 hnd1, lbl1 = ax2.get_legend_handles_labels()
 hnd2, lbl2 = ax2twin.get_legend_handles_labels()
@@ -82,9 +87,9 @@ lbl = lbl1+lbl2
 
 ax2.legend(hnd, lbl, loc='upper left', bbox_to_anchor=(1,1))
 
-ax3.plot(t_plot, np.tile(VpS-Vp, 8))
+ax3.plot(t_plot, VpS(t_plot) - Vp(t_plot))
 
 for a in axs[1:]:
-    a.set_xlim(0, 8/freq)
+    a.set_xlim(0, 8/zhinst.freq)
 
 plt.show()

@@ -115,10 +115,10 @@ def convert_cartesian_to_mag_and_phase(i_x: ndarray, i_y: ndarray, v_x: ndarray,
 
 
 # Set voltage to apply to excitation coil via lock-ins signal output
-V_out = 0.6
+V_out = 0.8
 
 # Set frequency range for sweep
-freq_sweep = np.geomspace(10e3, 5e6, 500)
+freq_sweep = np.geomspace(1e5, 1e6, 50)
 n_points_per_freq = 10  # repeat measurement at each frequency this many times
 omega_sweep = 2*np.pi * freq_sweep
 
@@ -138,7 +138,7 @@ print('GUI can be reached through entering serveradress', props['serveraddress']
 daq = zhinst.core.ziDAQServer(props['serveraddress'], 8004, 6)
 
 # Set voltage measurement input to 50 Ohms (less noise this way)
-daq.setInt('/dev6832/sigins/0/imp50', 1)
+daq.setInt('/dev6832/sigins/0/imp50', 0)
 
 # Use internal oscillator as reference
 daq.setInt('/dev6832/extrefs/0/enable', 0)
@@ -192,17 +192,19 @@ transfer_theta_deg = V_meas_theta_deg - I_theta_deg - 90
 
 fig, ax = plt.subplots()
 
-ax.semilogx(freq_sweep, transfer_mag, 'C0s')
+ax.semilogx(freq_sweep, transfer_mag, 'C0s', label='Magnitude Transfer')
 ax.set_ylabel('Magnitude transfer')
 
 ax2 = ax.twinx()
 
-ax2.semilogx(freq_sweep, transfer_theta_deg, 'C1o')
+ax2.semilogx(freq_sweep, transfer_theta_deg, 'C1o', label='Phase Shift')
 ax2.set_ylabel('Phase transfer [°]')
 
+ax.legend()
 fig.tight_layout()
 plt.show()
 
+arrays_to_save = {'I_mag': I_mag, 'I_theta_deg': I_theta_deg, 'transfer_mag': transfer_mag, 'transfer_theta_deg': transfer_theta_deg}
 
 # # Plot
 # fig1, ax1 = plt.subplots()
