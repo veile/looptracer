@@ -40,6 +40,41 @@ class LockInAmplifier():
         time.sleep(self.sleep_sync)
         self.daq.sync()
 
+    def retrieve_signal(self, adcselect):
+        '''
+        :param adcselect: integer from 0-9 that selects the input port
+        0 - Sig In 1
+        1 - Curr In 1
+        2 - Trigger 1
+        3 - Trigger 2
+        4 - Aux Out 1
+        5 - Aux Out 2
+        6 - Aux Out 3
+        7 - Aux Out 4
+        8 - Aux In 1
+        9 - Aux In 2
+
+        :return f: numpy.array of measured frequency
+                x: numpy.array of measured x-component of the complex signal
+                y: numpy.array of measured y-component of the complex signal
+        '''
+        self.daq.setInt(f'/{self.name}/demods/0/adcselect', adcselect)
+
+        # Wait for demodulator filter to settle
+        time.sleep(self.sleep_sync)
+        self.daq.sync()
+
+        self.daq.subscribe(f'/{self.name}/demods/0/sample')
+        time.sleep(self.sleep_data)
+        data = self.daq.poll(self.poll_length, timeout_ms=500, flat=True)
+        self.daq.unsubscribe('*')
+
+        x = data[f'/{self.name}/demods/0/sample']['x']
+        y = data[f'/{self.name}/demods/0/sample']['y']
+        f = data[f'/{self.name}/demods/0/sample']['frequency']
+
+        return f, x, y
+
     # Legacy method
     def retrieve_signals(self, harmonics = 'all'):
         Rc, Pc, fc = self.retrieve_vc()
@@ -49,19 +84,9 @@ class LockInAmplifier():
 
     def retrieve_vc(self):
         # Measure control coil signal
-        self.daq.setInt(f'/{self.name}/demods/0/adcselect', 8)
         self.daq.setInt(f'/{self.name}/demods/0/harmonic', 1)
-        time.sleep(self.sleep_sync)
-        self.daq.sync()
 
-        self.daq.subscribe(f'/{self.name}/demods/0/sample')
-        time.sleep(self.sleep_data)
-        data = self.daq.poll(self.poll_length, timeout_ms=500, flat=True)
-        self.daq.unsubscribe('*')
-
-        X = data[f'/{self.name}/demods/0/sample']['x']
-        Y = data[f'/{self.name}/demods/0/sample']['y']
-        freq = data[f'/{self.name}/demods/0/sample']['frequency']
+        freq, X, Y = self.retrieve_signal(adcselect=8)
 
         R = np.abs(X + 1j * Y)
         P = np.angle(X + 1j * Y)
@@ -74,8 +99,6 @@ class LockInAmplifier():
         else:
             N = int(harmonics)
 
-        # Pickup coil signal
-        self.daq.setInt(f'/{self.name}/demods/0/adcselect', 0)
         # Demodulated Amplitude R and phase P
         R = np.array([])
         P = np.array([])
@@ -86,18 +109,7 @@ class LockInAmplifier():
             print(f'Measuring harmonics {n} out of {N-1}...')
             self.daq.setInt(f'/{self.name}/demods/0/harmonic', n)
 
-            # Wait for the demodulator filter to settle.
-            time.sleep(self.sleep_sync)
-            self.daq.sync()
-
-            self.daq.subscribe(f'/{self.name}/demods/0/sample')
-            time.sleep(self.sleep_data)
-            data = self.daq.poll(self.poll_length, timeout_ms=500, flat=True)
-            self.daq.unsubscribe(f'/{self.name}/demods/0/sample')
-
-            x = data[f'/{self.name}/demods/0/sample']['x']
-            y = data[f'/{self.name}/demods/0/sample']['y']
-            f = data[f'/{self.name}/demods/0/sample']['frequency']
+            f, x, y = self.retrieve_signal(adcselect=0)
 
             r = np.abs(x+1j*y)
             p = np.angle(x+1j*y)
@@ -122,48 +134,23 @@ class LockInAmplifier():
         I, V = np.array([]), np.array([])
         for f in freqs:
             self.daq.setDouble(f'/{self.name}/oscs/0/freq', f)
-
-            # Wait for the demodulator filter to settle.
-            time.sleep(self.sleep_sync)
-            self.daq.sync()
+            print(f'{f/1e3} kHz')
 
             # Retrieve current
-            self.daq.setInt(f'/{self.name}/demods/0/adcselect', 1)
-            time.sleep(self.sleep_sync)
-            self.daq.sync()
-
-            self.daq.subscribe(f'/{self.name}/demods/0/sample')
-            time.sleep(self.sleep_data)
-            data = self.daq.poll(self.poll_length, timeout_ms=500, flat=True)
-            self.daq.unsubscribe('*')
-
-            ix = data[f'/{self.name}/demods/0/sample']['x']
-            iy = data[f'/{self.name}/demods/0/sample']['y']
-
+            _, ix, iy = self.retrieve_signal(adcselect=1)
             i = ix + 1j*iy
 
             # Retrieve voltage
-            self.daq.setInt(f'/{self.name}/demods/0/adcselect', 0)
-            time.sleep(self.sleep_sync)
-            self.daq.sync()
-
-            self.daq.subscribe(f'/{self.name}/demods/0/sample')
-            time.sleep(self.sleep_data)
-            data = self.daq.poll(self.poll_length, timeout_ms=500, flat=True)
-            self.daq.unsubscribe('*')
-
-            vx = data[f'/{self.name}/demods/0/sample']['x']
-            vy = data[f'/{self.name}/demods/0/sample']['y']
-
+            _, vx, vy = self.retrieve_signal(adcselect=0)
             v = vx + 1j*vy
 
-            if v.size  < i.size:
+            if v.size < i.size:
                 i = i[:v.size]
             else:
                 v = v[:i.size]
 
             # Outlier detection
-            outliers = np.abs(np.abs(v)-np.abs(v).mean()) > np.std(np.abs(v))
+            outliers = np.abs(np.abs(v)-np.abs(v).mean()) > 3*np.std(np.abs(v))
 
             print(f'Found {outliers.sum()} outliers out of {v.size}')
 

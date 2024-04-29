@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 
 filename = "2024-04-27 distortion imp50 50pts.txt"
 
-zhinst = LockInAmplifier(imp50=1)
+zhinst = LockInAmplifier(imp50=0)
 
 f, I, V = zhinst.distortion_corection(50)
 

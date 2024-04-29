@@ -24,7 +24,7 @@ def reconstruct(f, R, P, mag_transfer, phase_transfer, control_coil=False):
         phase_transfer = lambda f: 0
 
     def S(time):
-        amplitude = np.sqrt(2) * R / mag_transfer(f)
+        amplitude = np.sqrt(2) * R * mag_transfer(f)
         phase = np.exp(1j * P) * np.exp(1j * phase_transfer(f))
 
         return np.sum(1*amplitude * phase * np.exp(1j * 2 * np.pi * np.outer(time, f)), axis=1).imag
