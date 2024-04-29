@@ -8,7 +8,7 @@ class LockInAmplifier():
     """
     https://docs.zhinst.com/labone_programming_manual/low_level_commands.html
     """
-    def __init__(self, hostname='mf-dev6832.local', server_port=8004, api_level=6):
+    def __init__(self, hostname='mf-dev6832.local', server_port=8004, api_level=6, imp50 = 1):
         self.daq = zhinst.core.ziDAQServer(hostname, server_port, api_level)
 
         self.name = hostname[hostname.find('d'):hostname.find('d')+7]
@@ -29,7 +29,7 @@ class LockInAmplifier():
         # Ensure the device is pushing data to the data server
         # self.daq.setInt(f'/{self.name}/auxins/0/enable', 1)
         self.daq.setInt(f'/{self.name}/demods/0/enable', 1)
-        self.daq.setInt(f'/{self.name}/sigins/0/imp50', 1)
+        self.daq.setInt(f'/{self.name}/sigins/0/imp50', imp50)
 
         self.sleep_sync= 0.1 #10 * self.timeconstant
         self.poll_length = 0.05  # [s]
@@ -107,6 +107,76 @@ class LockInAmplifier():
             P = np.append(P, p)
 
         return R, P, freqs
+
+    def distortion_corection(self, pts=50):
+        freqs = np.geomspace(1e5, 5e6, pts)
+
+        # Use internal oscillator as reference
+        self.daq.setInt(f'/{self.name}/demods/0/harmonic', 1)
+        self.daq.setInt(f'/{self.name}/extrefs/0/enable', 0)
+
+        # Turn on output signal
+        self.daq.setDouble(f'/{self.name}/sigouts/0/amplitudes/1', 0.6)
+        self.daq.setInt(f'/{self.name}/sigouts/0/on', 1)
+
+        I, V = np.array([]), np.array([])
+        for f in freqs:
+            self.daq.setDouble(f'/{self.name}/oscs/0/freq', f)
+
+            # Wait for the demodulator filter to settle.
+            time.sleep(self.sleep_sync)
+            self.daq.sync()
+
+            # Retrieve current
+            self.daq.setInt(f'/{self.name}/demods/0/adcselect', 1)
+            time.sleep(self.sleep_sync)
+            self.daq.sync()
+
+            self.daq.subscribe(f'/{self.name}/demods/0/sample')
+            time.sleep(self.sleep_data)
+            data = self.daq.poll(self.poll_length, timeout_ms=500, flat=True)
+            self.daq.unsubscribe('*')
+
+            ix = data[f'/{self.name}/demods/0/sample']['x']
+            iy = data[f'/{self.name}/demods/0/sample']['y']
+
+            i = ix + 1j*iy
+
+            # Retrieve voltage
+            self.daq.setInt(f'/{self.name}/demods/0/adcselect', 0)
+            time.sleep(self.sleep_sync)
+            self.daq.sync()
+
+            self.daq.subscribe(f'/{self.name}/demods/0/sample')
+            time.sleep(self.sleep_data)
+            data = self.daq.poll(self.poll_length, timeout_ms=500, flat=True)
+            self.daq.unsubscribe('*')
+
+            vx = data[f'/{self.name}/demods/0/sample']['x']
+            vy = data[f'/{self.name}/demods/0/sample']['y']
+
+            v = vx + 1j*vy
+
+            if v.size  < i.size:
+                i = i[:v.size]
+            else:
+                v = v[:i.size]
+
+            # Outlier detection
+            outliers = np.abs(np.abs(v)-np.abs(v).mean()) > np.std(np.abs(v))
+
+            print(f'Found {outliers.sum()} outliers out of {v.size}')
+
+            i = i[~outliers]
+            v = v[~outliers]
+
+            I = np.append(I, i.mean())
+            V = np.append(V, v.mean())
+
+        # Turn off output signal
+        self.daq.setInt(f'/{self.name}/sigouts/0/on', 0)
+
+        return freqs, I, V
 
 
     # def calibrate_field(self, file, COM, capacitance='200 nF'):
