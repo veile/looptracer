@@ -8,7 +8,7 @@ class LockInAmplifier():
     """
     https://docs.zhinst.com/labone_programming_manual/low_level_commands.html
     """
-    def __init__(self, hostname='mf-dev6832.local', server_port=8004, api_level=6, imp50 = 1):
+    def __init__(self, hostname='mf-dev6832.local', server_port=8004, api_level=6, imp50=1):
         self.daq = zhinst.core.ziDAQServer(hostname, server_port, api_level)
 
         self.name = hostname[hostname.find('d'):hostname.find('d')+7]
@@ -39,6 +39,13 @@ class LockInAmplifier():
         self.daq.unsubscribe("*")
         time.sleep(self.sleep_sync)
         self.daq.sync()
+
+    def get_settings(self):
+        d1 = self.daq.get(f'/{self.name}/demods', flat=True)
+        d2 = self.daq.get(f'/{self.name}/sigins', flat=True)
+        d1.update(d2)
+
+        return d1
 
     def retrieve_signal(self, adcselect):
         '''
