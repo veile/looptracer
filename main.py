@@ -12,12 +12,10 @@ filename = input()
 zhinst = LockInAmplifier()
 
 with open(filename+'.csv', 'w') as f:
-    f.write('Some settings')
-    settings = zhinst.get_settings()
-    for key, item in settings.items():
-        i = key.rfind('/')+1
-        f.write(f"# {key}\t{item['value'][0]}\n")
-        # print(key[i:], item['value'])
+    settings = pd.DataFrame(zhinst.get_settings())
+    # settings = {'/dev682/demods/0/adcselect': [0], '/dev682/sigins/0/imp50': [1]}
+    # settings = pd.DataFrame(settings)
+    settings.to_csv(filename+'.csv', index=False)
 
 # # print('''Choose Capacitance:\n1. 6.2 nF\n2. 15 nF\n3. 26 nF\n4. 88 nF\n5. 200 nF\n''')
 # # cap_input = input()

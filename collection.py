@@ -8,7 +8,7 @@ class LockInAmplifier():
     """
     https://docs.zhinst.com/labone_programming_manual/low_level_commands.html
     """
-    def __init__(self, hostname='mf-dev6832.local', server_port=8004, api_level=6, imp50=1):
+    def __init__(self, hostname='mf-dev6832', server_port=8004, api_level=6, imp50=1):
         self.daq = zhinst.core.ziDAQServer(hostname, server_port, api_level)
 
         self.name = hostname[hostname.find('d'):hostname.find('d')+7]
