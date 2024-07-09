@@ -1,57 +1,75 @@
 from collection import LockInAmplifier
+from zhinst.utils import save_settings
 from processing import reconstruct
 import pandas as pd
-import numpy as np
+import os
 
+import numpy as np
 import matplotlib.pyplot as plt
 
-print("Please write filename (without any extension)")
-filename = input()
+
+# Fill out fields ---------------
+parameters = {
+    'path':      'data/testing/',
+    'filename':  '2024-07-09 Testing new saving settings NF 10A',
+    'current':   '10', # In Amps
+    'capacitor': '200nF', #200nF, 88nF, 26nF, 15nF, or 6.2nF
+    'weight':    '0.1', # In g
+    'imp50': 0,
+}
+# -------------------------------
+
+filename, path = parameters['filename'], parameters['path']
 
 # Initialize equipment
-zhinst = LockInAmplifier()
+zhinst = LockInAmplifier(imp50=parameters['imp50'])
 
-with open(filename+'.csv', 'w') as f:
-    settings = pd.DataFrame(zhinst.get_settings())
-    # settings = {'/dev682/demods/0/adcselect': [0], '/dev682/sigins/0/imp50': [1]}
-    # settings = pd.DataFrame(settings)
-    settings.to_csv(filename+'.csv', index=False)
 
-# # print('''Choose Capacitance:\n1. 6.2 nF\n2. 15 nF\n3. 26 nF\n4. 88 nF\n5. 200 nF\n''')
-# # cap_input = input()
-# #
-# # cap = {'1': '6.2 nF', '2': '15 nF', '3': '26 nF', '4': '88 nF', '5': '200 nF'}[cap_input]
-# # filename = f'FieldCal {cap}.txt'
-# # zhinst.calibrate_field('data/'+filename, 'COM6', capacitance=cap)
-#
-# # Blank measurement
-# Rc, Pc, fc, Rp, Pp, fp = zhinst.retrieve_signals()
-#
-# print('Press enter when sample is positioned...')
-# input()
-#
-# RcS, PcS, fcS, RpS, PpS, fpS = zhinst.retrieve_signals()
-#
-# harmonic_frequency = zhinst.freq
-#
-# # Combining the data into a pandas DataFrame that is saved
-# data = {
-#     'Blank Control Frequency': fc,
-#     'Blank Control R': Rc,
-#     'Blank Control P': Pc,
-#     'Blank Pickup Frequency': fp,
-#     'Blank Pickup R': Rp,
-#     'Blank Pickup P': Pp,
-#     'Sample Control Frequency': fcS,
-#     'Sample Control R': RcS,
-#     'Sample Control P': PcS,
-#     'Sample Pickup Frequency': fpS,
-#     'Sample Pickup R': RpS,
-#     'Sample Pickup P': PpS,
-# }
-#
-# df = pd.DataFrame({key: pd.Series(value) for key, value in data.items()})
-# df.to_csv('data/'+filename+'.csv', mode='a')
+if not os.path.exists(path):
+    os.mkdir(path)
+
+#save_settings(zhinst.daq, 'dev6832', path+filename+'_settings')
+
+with open(path+filename+'_parameters.txt', 'w') as f:
+    for param in parameters:
+        f.write(f'# {param}: {parameters[param]}\n')
+
+# Blank measurement
+Rc, Pc, fc, Rp, Pp, fp = zhinst.retrieve_signals()
+
+print('Press enter when sample is positioned...')
+input()
+
+# Sample measurement
+RcS, PcS, fcS, RpS, PpS, fpS = zhinst.retrieve_signals()
+
+harmonic_frequency = zhinst.freq
+
+# Combining the data into a pandas DataFrame that is saved
+control_coil = {
+    'Blank Control Frequency': fc,
+    'Blank Control R': Rc,
+    'Blank Control P': Pc,
+    'Sample Control Frequency': fcS,
+    'Sample Control R': RcS,
+    'Sample Control P': PcS,
+}
+
+pickup_coil = {
+    'Blank Pickup Frequency': fp,
+    'Blank Pickup R': Rp,
+    'Blank Pickup P': Pp,
+    'Sample Pickup Frequency': fpS,
+    'Sample Pickup R': RpS,
+    'Sample Pickup P': PpS,
+}
+
+df_c = pd.DataFrame({key: pd.Series(value) for key, value in control_coil.items()})
+df_p = pd.DataFrame({key: pd.Series(value) for key, value in pickup_coil.items()})
+
+df_c.to_csv(path+filename+'_control.csv', mode='a')
+df_p.to_csv(path+filename+'_pickup.csv', mode='a')
+
 #
 #
 #

@@ -40,13 +40,6 @@ class LockInAmplifier():
         time.sleep(self.sleep_sync)
         self.daq.sync()
 
-    def get_settings(self):
-        d1 = self.daq.get(f'/{self.name}/demods', flat=True)
-        d2 = self.daq.get(f'/{self.name}/sigins', flat=True)
-        d1.update(d2)
-
-        return d1
-
     def retrieve_signal(self, adcselect):
         '''
         :param adcselect: integer from 0-9 that selects the input port
@@ -80,7 +73,7 @@ class LockInAmplifier():
         y = data[f'/{self.name}/demods/0/sample']['y']
         f = data[f'/{self.name}/demods/0/sample']['frequency']
 
-        return f, x, y
+        return f[:50], x[:50], y[:50]
 
     # Legacy method
     def retrieve_signals(self, harmonics = 'all'):
@@ -127,7 +120,7 @@ class LockInAmplifier():
 
         return R, P, freqs
 
-    def distortion_corection(self, pts=50):
+    def distortion_correction(self, pts=50):
         freqs = np.geomspace(1e5, 5e6, pts)
 
         # Use internal oscillator as reference
@@ -171,37 +164,3 @@ class LockInAmplifier():
         self.daq.setInt(f'/{self.name}/sigouts/0/on', 0)
 
         return freqs, I, V
-
-
-    # def calibrate_field(self, file, COM, capacitance='200 nF'):
-    #     try:
-    #         max_current = {'200 nF': 28, '88 nF': 23,  '26 nF': 20, '15 nF': 17, '6.2 nF': 13}[capacitance]
-    #     except KeyError:
-    #         raise ValueError('Capacitance input is wrongly formatted - should be a string like \'200 nF\' ')
-    #
-    #     current = np.arange(1, max_current+1)
-    #
-    #     # Initialising the power supply
-    #     PS = PowerSupply(COM)
-    #
-    #     PS.set_V(45)
-    #     PS.set_I(0)
-    #     PS.set_output('ON')
-    #
-    #     with open(file, 'w') as f:
-    #         f.write(f'# {self.freq} kHz\nCurrent [A]\tAmplitude [V]\n')
-    #
-    #     for I in current:
-    #         print(f"Measuring PSU A = {I}")
-    #         PS.set_I(I)
-    #
-    #         # Wait 2 seconds before measurement - stabilizing
-    #         time.sleep(2)
-    #         R, P, freq = self.retrieve_vc()
-    #         Vc = self._reconstruct(R, P, [self.freq], control_coil=True)
-    #         with open(file, 'a') as f:
-    #             f.write(f'{I}\t{np.max(Vc)}\n')
-    #
-    #     print('Finished')
-    #
-    #     PS.set_default()
