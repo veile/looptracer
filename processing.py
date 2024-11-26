@@ -1,14 +1,39 @@
 import numpy as np
 from scipy.integrate import trapezoid, cumulative_trapezoid
-
+from scipy.interpolate import interp1d
 
 def find_nearest_idx(array, value):
     array = np.asarray(array)
     return (np.abs(array - value)).argmin()
 
 
-class CoilSignals:
-    def __init__(self, t, pickup_signal, control_signal, freq):
+def reconstruct(f, R, P, mag_transfer, phase_transfer, control_coil=False):
+    # Removing nan values
+    f = f[~np.isnan(f)]
+    R = R[~np.isnan(R)]
+    P = P[~np.isnan(P)]
+
+
+    # Normalize by numbers of frequencies
+    norm = np.ones(f.size)
+    idx = np.append([0], np.where(np.diff(f) > 1)[0]+1)
+    # norm[idx] = np.append(np.diff(idx), f.size-idx[-1])
+
+    if control_coil:
+        mag_transfer = lambda f: 1
+        phase_transfer = lambda f: 0
+
+    def S(time):
+        amplitude = np.sqrt(2) * R * mag_transfer(f)
+        phase = np.exp(1j * P) * np.exp(1j * phase_transfer(f))
+
+        return np.sum(1*amplitude * phase * np.exp(1j * 2 * np.pi * np.outer(time, f)), axis=1).imag
+
+    return lambda t: S(t)
+
+
+class CoilSignal:
+    def __init__(self, R, P, f):
         """
         :numpy.array t: time signal in seconds
         :numpy.array pickup_signal: voltage signal from pickup coil (magnetic moment)
@@ -18,38 +43,26 @@ class CoilSignals:
         Function should be adjusted for the format of future undecided convention
         """
 
-        # Extracts the first period
-        self.T = 1 / freq
+        self.R = R
+        self.P = P
+        self.f = f
 
-        # end = find_nearest_idx(t-t[0], self.T)
+    def reconstruct(self, frequency, mag_transfer, phase_transfer, control_coil=False):
+        # Interpolate magnitude and phase values
+        magnitude_transfer = interp1d(frequency, mag_transfer)
+        phase_transfer = interp1d(frequency, phase_transfer / 180 * np.pi)
 
-        # Makes sure only complete periods exists (working with multiple periods)
-        # end = int(np.floor(t.size - (t[-1] % self.T)))
+        if control_coil:
+            magnitude_transfer = lambda f: 1
+            phase_transfer = lambda f: 0
 
-        self.t = t#[:end]
-        self.Vp = pickup_signal#[:end]
-        self.Vc = control_signal#[:end]
+        def S(time):
+            amplitude = np.sqrt(2) * self.R / magnitude_transfer(self.f)
+            phase = np.exp(1j * self.P) * np.exp(1j * phase_transfer(self.f))
 
-        self.remove_dc_bias()
-        self.integrate()
+            return np.sum(amplitude * phase * np.exp(1j * 2 * np.pi * np.outer(time, self.f)), axis=1).imag
 
-    def remove_dc_bias(self):
-        """
-        Integrating a period of the signal should average to 0.
-        This function removes any DC bias to ensure this.
-        """
-        integral_p = trapezoid(self.Vp, self.t)
-        integral_c = trapezoid(self.Vc, self.t)
-
-        dc_p = integral_p / self.T
-        dc_c = integral_c / self.T
-
-        self.Vp = self.Vp - dc_p
-        self.Vc = self.Vc - dc_c
-
-    def integrate(self):
-        self.Vp = cumulative_trapezoid(self.Vp, self.t, initial=0)
-        self.Vc = cumulative_trapezoid(self.Vc, self.t, initial=0)
+        return lambda t: S(t)
 
 class HysCurve:
     def __init__(self, sample_signal, blank_signal, cal_x, cal_y):
@@ -80,35 +93,3 @@ class HysCurve:
 
         self.Y = (self.SS.Vp - offset_y)
         self.X = (self.SS.Vc - offset_x)
-
-if __name__ == '__main__':
-    import matplotlib.pyplot as plt
-    import pandas as pd
-
-    def load_xlsx(filename):
-        df = pd.read_excel(filename)
-        t = np.array(df['X'].iloc[1:], dtype=float)
-        Vp = np.array(df['CH4'].iloc[1:], dtype=float)
-        Vc = -np.array(df['CH3'].iloc[1:], dtype=float)
-
-        return CoilSignals(t, Vp, Vc, rate=1e-8, freq=160.6e3)
-
-
-    sample = load_xlsx('10_with_sample_26Amps_160-6-kHz-36-2-V_1024_avg.xlsx')
-    blank = load_xlsx('11_no_sample_26Amps_160-6-kHz-36-2-V_1024_avg.xlsx')
-
-    H = HysCurve(sample, blank, 1, 1)
-
-    fig, ax = plt.subplots()
-
-    ax.plot(sample.t, sample.Vp)
-    ax2 = ax.twinx()
-    ax2.plot(sample.t, sample.Vc, c='C1')
-
-    plt.show()
-
-    fig, ax = plt.subplots()
-    ax.plot(H.X, H.Y)
-    plt.show()
-
-
