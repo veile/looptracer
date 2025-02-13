@@ -4,3 +4,5 @@ matplotlib
 zhinst
 pyserial
 scipy
+serial
+osensapy

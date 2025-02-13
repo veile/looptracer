@@ -2,13 +2,23 @@ import numpy as np
 from collection import LockInAmplifier
 import time
 import matplotlib.pyplot as plt
+import datetime
 
-filename = "2024-04-27 distortion imp50 50pts.txt"
+# filename = "2024-04-27 distortion imp50 50pts.txt"
 
-zhinst = LockInAmplifier(imp50=0)
+imp50 = 0
+pts = 50
 
-f, I, V = zhinst.distortion_corection(50)
+# Constructing filename
+date = datetime.datetime.today().strftime('%Y-%m-%d')
+impedance = 'imp50' if imp50 == 1 else 'HiZ'
+filename = f'Distortion Corrections/{date} Distortion Correction {pts}pts {impedance}.txt'
 
+# Custom filename if necessary
+# filename = ''
+
+zhinst = LockInAmplifier(imp50=imp50)
+f, I, V = zhinst.distortion_correction(pts=pts)
 
 # The expected voltage is equal to frequency, current and some coil property constant.
 # The constant is not important as we calibrate the system later.
@@ -27,7 +37,6 @@ Pexp = np.angle(I*np.exp(1j*np.pi/2))
 # pi is added to get the phase in range of 0 - 2pi to use modulus and then subtract eh pi again.
 phase_transfer = (Pexp - np.angle(V)+np.pi) % (2*np.pi) - np.pi
 
-
 # Plotting the results
 fig, ax = plt.subplots()
 
@@ -44,5 +53,5 @@ ax2.legend()
 fig.tight_layout()
 plt.show()
 
-# arrays_to_save = {'f': f, 'I': I, 'V': V}s
-np.savetxt(filename, (f, I, V))
+# arrays_to_save = {'f': f, 'I': I, 'V': V}
+np.savetxt(filename, (f, I, V)) # Frequency is saved as complex number which is a bit annoying.

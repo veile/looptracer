@@ -8,74 +8,34 @@ import serial
 import time
 import random
 import sys
+from osensapy import osensapy
 
 class WrongDeviceError(Exception):
     """Base class for wrong device"""
 
-class ToneGenerator():
-    endchar = "\r\n"
-    def __init__(self, port, baudrate=19200):
 
-        self.ser = serial.Serial(port=port,
-                                 baudrate=baudrate)
+class fiber:
+    '''
+    id = 247 single channel transmitter
+    id = 40  triple channel transmitter
+    '''
 
-    def comm(self, cmd):
-        cmd = cmd + self.endchar
-        self.ser.write(cmd.encode('utf-8'))
+    def __init__(self, port, id=40):
+        self.transmitter = osensapy.Transmitter(port, id, baudrate=115200)
 
-        time.sleep(.07)
+    def __len__(self):
+        return 3
 
-        reply = self.ser.read(self.ser.inWaiting()).decode('utf-8', errors='ignore')
-        if reply == '':
-            return self.error_status().strip(self.endchar)
-        else:
-            return reply.strip(self.endchar)
+    def get_T(self):
+        return [reading[1] for reading in self.transmitter.fast_batch(3)]
 
-    def get_id(self):
-        # Asks for device identification
-        return self.comm('*IDN?')
-
-    def error_status(self):
-        return self.comm('EER?')
-
-    def set_output(self, state):
-        s = state.upper()
-        if s not in ['ON', 'OFF']:
-            raise NameError("%s is not a valid output mode" %s)
-
-        return self.comm('OUTPUT '+s)
-
-    def set_amplitude(self, amplitude, unit='VPP'):
-        # Checks if input is allowed
-        if not 0.005 < amplitude < 20:
-            raise ValueError("Amplitude is not within required range 5mV-20V")
-
-        unit = unit.upper()
-        if unit not in ['VPP', 'VRMS', 'DBM']:
-            raise NameError("Amplitude Type %s is not valid" %unit)
-
-        cmd = 'AMPUNIT ' + unit + ';AMPL ' + str(amplitude)
-        return self.comm(cmd)
-
-    # Implement check on frequency
-    def set_frequency(self, f):
-        return self.comm('WAVFREQ '+ str(f))
-
-    def set_waveform(self, form):
-        form = form.upper()
-        if form not in ['SINE', 'SQUARE', 'TRIANG', 'DC', '+PULSE', '-PULSE']:
-            raise NameError("Waveform %s is not valid" %form)
-
-        return self.comm('WAVE ' + form)
-
-    def set_symmetry(self, value):
-        if 0 <= value <= 100:
-            return self.comm('SYMM ' + str(value))
-        else:
-            raise ValueError("Symmetry has to be a float between 0-100")
+    def reinitialize(self):
+        port = self.transmitter.modbus.serial.port
+        self.transmitter.close()
+        self.transmitter = osensapy.Transmitter(port, 247, baudrate=115200)
 
 
-class PowerSupply():
+class PowerSupply:
     endchar = "\r\n"
 
     def __init__(self, port, baudrate=9600):
