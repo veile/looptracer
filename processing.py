@@ -21,6 +21,10 @@ def avg_array(x, idx):
     return np.array([x[idx[i]:idx[i + 1]].mean() for i in range(len(idx) - 1)])
 
 
+def sum_array(x, idx):
+    return np.array([x[idx[i]:idx[i + 1]].sum() for i in range(len(idx) - 1)])
+
+
 def get_distortion_correction(f, I, V):
     f = np.abs(f)
     # The expected voltage is equal to frequency, current and some coil property constant.
@@ -71,7 +75,7 @@ def get_coeff(df, mag_transfer=lambda f: 1, phase_transfer=lambda f: 0, phase_co
     f, R, P = np.tile(f, repeats), np.tile(R, repeats), np.tile(P, repeats)
     f_C, R_C, P_C = np.tile(f_C, repeats), np.tile(R_C, repeats), np.tile(P_C, repeats)
 
-    # Phase distortion correction and phase correction
+    # Phase distortion correction
     P = np.angle(np.exp(1j * (P + phase_transfer(f))))
     PS = np.angle(np.exp(1j * (PS + phase_transfer(fS))))
 
@@ -80,12 +84,18 @@ def get_coeff(df, mag_transfer=lambda f: 1, phase_transfer=lambda f: 0, phase_co
     ϕv = np.angle(np.exp(1j * (PS_C + np.pi / 2)))
     # ϕv = np.pi/2
 
-    # # Magnetic Moment
+    #  Magnetic Moment
     V = np.sqrt(2) * RS * mag_transfer(fS) * np.exp(1j * PS) - \
         np.sqrt(2) * R * mag_transfer(f) * np.exp(1j * P)
 
+    # V = (np.sqrt(2) * RS * mag_transfer(fS) - np.sqrt(2) * R  * mag_transfer(f )) * np.exp(1j * PS)
+
     M = np.abs(V) / (2 * np.pi * fS)
-    ϕ = np.angle(V * np.exp(1j * np.pi / 2 - n * phase_correction))
+    # M = (RS*mag_transfer(fS)-R*mag_transfer(f))/(2*np.pi*fS)
+
+    ϕ = np.angle(V * np.exp(1j * (np.pi / 2 - n * np.repeat(phase_correction * np.pi / 180, df.N))))
+    # ϕ = np.unwrap(PS-P+np.pi/2-n*np.repeat(phase_correction*np.pi/180, df.N))
+    # ϕ = np.unwrap(np.angle(V)+np.pi/2-n*np.repeat(phase_correction*np.pi/180, df.N))
 
     return Hv, ϕv, M, ϕ
 
@@ -181,7 +191,8 @@ class LoopTracer():
 
         df = pd.concat([types[type]['df'] for type in types], axis=1)
 
-        df['repeats'] = df['Sample Control f'].apply(np.size)
+        df['repeats'] = df['Sample Control f'].apply(np.size)  # Number of repeats
+        df['N'] = df.apply(lambda row: int(row['Sample Pickup f'].size / row['repeats']), axis=1)  # No. harmonics
 
         # Loading Temperature data
         try:
@@ -192,8 +203,17 @@ class LoopTracer():
             df_temp = (df_temp.groupby((df_temp.index == 0).cumsum()).agg(list)
                        .map(lambda x: np.nan if np.isnan(np.array(x)).all() else np.array(x)))
 
-            df_temp.rename({'Time UTC': 'Temperature Time UTC'}, inplace=True)
+            # df_temp.rename({'Time UTC': 'Temperature Time UTC'}, inplace=True)
             df = pd.concat([df, df_temp], axis=1)
+
+            # Adding the time equivalent value for all temperature data
+            def get_eq_idx(row):
+                times = row['Sample Pickup Time UTC'][::row.N]
+                return [find_nearest_idx(row['Time UTC'], time) for time in times]
+
+            df['lt-voltage'] = df.apply(lambda row: row['Voltage [V]'][get_eq_idx(row)], axis=1)
+            df['lt-current'] = df.apply(lambda row: row['Current [A]'][get_eq_idx(row)], axis=1)
+            df['lt-T0'] = df.apply(lambda row: row['T0 [degC]'][get_eq_idx(row)], axis=1)
 
         except IOError:
             print('No Temperature data found')
@@ -216,8 +236,18 @@ class LoopTracer():
         def get_HM_wrapper(df_row):
             cap = df_row['capacitor']
 
+            # phase_correction = self.phase_correction
             # phase_correction = self.phase_correction[cap] * 2 * np.pi / 360
             # phase_correction = np.mean(self.phase_correction[cap]['diff'], axis=0)
+            try:
+                # phase_correction = np.poly1d(self.phase_correction[cap][df_row.field])(df_row['lt-voltage'])
+                phase_correction = np.ones(df_row.repeats) * self.phase_correction[cap][df_row.field]
+            except TypeError:
+                phase_correction = np.ones(df_row.repeats) * self.phase_correction
+
+            except KeyError:
+                print(f'No calibration for {df_row.filename} - using zero')
+                phase_correction = np.zeros(df_row.repeats)
 
             if df_row['imp50']:
                 mag_transfer = self.distortion['imp50']['Mag Transfer']
@@ -226,7 +256,7 @@ class LoopTracer():
                 mag_transfer = self.distortion['HiZ']['Mag Transfer']
                 phase_transfer = self.distortion['HiZ']['Phase Transfer']
 
-            Hv, ϕv, M, ϕ = get_coeff(df_row, mag_transfer, phase_transfer)  # , phase_correction)
+            Hv, ϕv, M, ϕ = get_coeff(df_row, mag_transfer, phase_transfer, phase_correction)
 
             return Hv, ϕv, M, ϕ
 
@@ -237,13 +267,13 @@ class LoopTracer():
         self.df['H0'] = self.df['H0*'] * cH
         self.df['Mn'] = self.df['Mn*'] * cM
 
-    def get_HM(self, filename):
+    def get_HM(self, i):
 
-        try:
-            i = np.where(self.df['Filenames'] == filename)[0][0]
-        except IndexError:
-            print(f'{filename} does not exist in the data!')
-            raise IndexError
+        # try:
+        #     i = np.where(self.df['Filenames'] == filename)[0][0]
+        # except IndexError:
+        #     print(f'{filename} does not exist in the data!')
+        #     raise IndexError
 
         H0 = self.df.loc[i]['H0']
         Hp = self.df.loc[i]['Hp']
@@ -256,20 +286,100 @@ class LoopTracer():
         repeats = self.df.loc[i]['repeats']
 
         # Looping through all repeated measurements
-        M = 1000  # Gridpoints
+        grid = 300  # 1/3Gridpoints
         N = int(Mpn.size / repeats)  # No. harmonics
 
-        t = np.linspace(0, 1 / fS_C[0], M)
+        # t = np.linspace(0, 1 / fS_C[0], grid)
 
-        H, M = np.zeros((repeats, M)), np.zeros((repeats, M))
+        H, M = np.zeros((repeats, 3 * grid)), np.zeros((repeats, 3 * grid))
 
         for j in range(repeats):
             # Constructing the time signals from Fourier series
-            H[j] = H0[j] * np.sin(2 * np.pi * fS_C[j] * t + Hp[j])
-            M[j] = (Mn[j * N:j * N + N] * np.sin(
-                np.outer(t, 2 * np.pi * fS[j * N:j * N + N]) + Mpn[j * N:j * N + N])).sum(axis=1)
+            # t = np.linspace(0, 1 / fS_C[0], grid)
+            # H[j] = H0[j] * np.sin(2 * np.pi * fS_C[j] * t + Hp[j])
+            # M[j] = (Mn[j*N:j*N+N] * np.sin(np.outer(t, 2 * np.pi * fS[j*N:j*N+N]) + Mpn[j*N:j*N+N])).sum(axis=1)
+
+            # Without time: (hassle in sine - maybe atan2 can be used in a clever way)
+            H1 = np.linspace(0, H0[j], grid)
+            x1 = np.arcsin(H1 / H0[j]) - Hp[j]
+
+            H2 = np.linspace(H0[j], -H0[j], grid)
+            x2 = np.pi - np.arcsin(H2 / H0[j]) - Hp[j]
+
+            H3 = np.linspace(-H0[j], 0, grid)
+            x3 = np.arcsin(H3 / H0[j]) - Hp[j] + 2 * np.pi
+
+            x = np.concatenate((x1, x2, x3))
+
+            # H[j] = H0[j] * np.sin(x + Hp[j])
+            H[j] = np.concatenate((H1, H2, H3))
+
+            n = fS[j * N:j * N + N] / fS[j * N]
+            M[j] = (Mn[j * N:j * N + N] * np.sin(np.outer(x, n) + Mpn[j * N:j * N + N])).sum(axis=1)
 
         return H, M
+
+
+def get_area(row):
+    H0 = row['H0']
+    Hp = row['Hp']
+    Mn = row['Mn']
+    Mpn = row['Mpn']
+
+    fS = row['Sample Pickup f']
+
+    repeats = row['repeats']
+    N = int(Mpn.size / repeats)  # No. harmonics
+
+    W = np.pi * (4 * np.pi * 1e-7 * H0) * Mn[::N] * np.sin(Hp - Mpn[::N]) * fS[::N].mean()
+
+    # Error propagation
+    δH = 3.13e-2
+    δM = 2.97e-2
+    ΔMp = 0.14 * np.pi / 180
+
+    δW = np.sqrt(δH ** 2 + δM ** 2 + (ΔMp / np.tan(Hp - Mpn[::N])))
+
+    return W  # , δW
+
+
+def cal_power(row):
+    t = row['Time UTC']
+    t = t - t[0]
+    T = row['T0 [degC]']
+
+    V = row['Voltage [V]']
+    C = 4186  # J / kg K
+    m = row.weight * 1e-3
+
+    try:
+        on = np.where(V > 0)[0]
+        back = np.arange(on[0])
+        off = np.arange(on[-1], V.size, 1)
+    except:
+        return m * C * np.polyfit(t, T, 1)[0]
+
+    start = 5
+    N = 10
+    p_on, cov_on = np.polyfit(t[on[start:start + N]], T[on[start:start + N]], 1, cov=True)
+    p_back, cov_back = np.polyfit(t[back], T[back], 1, cov=True)
+
+    P = m * C * (p_on[0] - p_back[0])
+
+    Δon = np.sqrt(np.diag(cov_on))[0]
+    Δback = np.sqrt(np.diag(cov_back))[0]
+
+    ΔP = m * C * np.sqrt(Δon ** 2 + Δback ** 2)
+    δP = ΔP / P
+    # print(δP)
+    # max slope technique (form of initial slope)
+
+    # from scipy.signal import savgol_filter
+    # dTdt = m*C*savgol_filter(T[on], 6, 1, 1, 0.5)
+    # return dTdt.max()
+
+    return P
+    # return m*C*p_on[0]
 
 if __name__ == '__main__':
     test = LoopTracer('data/testing')
