@@ -30,10 +30,11 @@ def get_distortion_correction(f, I, V):
     # The expected voltage is equal to frequency, current and some coil property constant.
     # The constant is not important as we calibrate the system later.
     Vexp = f * np.abs(I)
-    # print(Vexp)
+
     # Magnitude transfer denotes the attenuation/rise of the true voltage due to the pick-up coils.
     # This constant needs to be multiplied onto the measured voltage
     mag_transfer = Vexp / np.abs(V)
+    mag_transfer = mag_transfer / mag_transfer[0]  # normalizing mag_transfer
 
     # Phase transfer denotes the phase shift imposed by the pick-up system
     # The phase shift needs to be added onto the measured phase.
@@ -42,9 +43,7 @@ def get_distortion_correction(f, I, V):
 
     # This is to correctly add angles
     # pi is added to get the phase in range of 0 - 2pi to use modulus and then subtract eh pi again.
-    # phase_transfer = (Pexp - np.angle(V) +np.pi) % (2*np.pi) - np.pi
     phase_transfer = np.angle(np.exp(1j * Pexp) * np.exp(-1j * np.angle(V)))
-    # phase_transfer = Pexp - np.angle(V)
 
     return interp1d(f, mag_transfer), interp1d(f, phase_transfer)
 
@@ -68,7 +67,7 @@ def get_coeff(df, mag_transfer=lambda f: 1, phase_transfer=lambda f: 0, phase_co
     RS_C = df['Sample Control R']
     PS_C = df['Sample Control P']
 
-    n = df['Sample Pickup /dev6832/demods/0/harmonic']
+    n = df['Sample Pickup n']
     repeats = df['repeats']
 
     # Applying same blank to all measurements
@@ -81,21 +80,13 @@ def get_coeff(df, mag_transfer=lambda f: 1, phase_transfer=lambda f: 0, phase_co
 
     # Applied field
     Hv = np.sqrt(2) * RS_C / (2 * np.pi * fS_C)
-    ϕv = np.angle(np.exp(1j * (PS_C + np.pi / 2)))
-    # ϕv = np.pi/2
+    ϕv = np.angle(np.exp(1j * (PS_C)))
 
     #  Magnetic Moment
     V = np.sqrt(2) * RS * mag_transfer(fS) * np.exp(1j * PS) - \
         np.sqrt(2) * R * mag_transfer(f) * np.exp(1j * P)
-
-    # V = (np.sqrt(2) * RS * mag_transfer(fS) - np.sqrt(2) * R  * mag_transfer(f )) * np.exp(1j * PS)
-
     M = np.abs(V) / (2 * np.pi * fS)
-    # M = (RS*mag_transfer(fS)-R*mag_transfer(f))/(2*np.pi*fS)
-
-    ϕ = np.angle(V * np.exp(1j * (np.pi / 2 - n * np.repeat(phase_correction * np.pi / 180, df.N))))
-    # ϕ = np.unwrap(PS-P+np.pi/2-n*np.repeat(phase_correction*np.pi/180, df.N))
-    # ϕ = np.unwrap(np.angle(V)+np.pi/2-n*np.repeat(phase_correction*np.pi/180, df.N))
+    ϕ = np.angle(V * np.exp(1j * ( - n * np.repeat(phase_correction * np.pi / 180, df.N))))
 
     return Hv, ϕv, M, ϕ
 
@@ -165,22 +156,17 @@ class LoopTracer():
             df = (df.groupby((df.index == 0).cumsum()).agg(list)
                   .map(lambda x: np.nan if np.isnan(np.array(x)).all() else np.array(x)))
 
-            # Averaging x and y-values and 'casting' them to amplitude and phase:
-            # df['avg_idx'] = df['/dev6832/demods/0/harmonic'].apply(unique_idx)
-
-            # freq = df.apply(lambda row: avg_array(row['f'], row['avg_idx']), axis=1)
-            # Z = df.apply(lambda row: avg_array(row['x']+1j*row['y'], row['avg_idx']), axis=1)
-
             Z = df['x'] + 1j * df['y']
             R = Z.apply(np.abs)
             P = Z.apply(np.angle)
+            n = df['/dev6832/demods/0/harmonic']
 
-            #
-            # # Insert puts the columns first
+
+            # Insert puts the columns first
             df.insert(0, 'Z', Z)
             df.insert(0, 'P', P)
             df.insert(0, 'R', R)
-            # df.insert(0, 'Frequency', freq)
+            df.insert(0, 'n', n)
 
             # Column names to be consistent with before
             prefix = type.split('_')
@@ -228,6 +214,7 @@ class LoopTracer():
                 lines = f.read().splitlines()
                 params.append({line[2:line.find(':')]: line[line.find(':') + 2:] for line in lines})
 
+        # df_params = pd.DataFrame(params).apply(pd.to_numeric, errors='ignore')
         df_params = pd.DataFrame(params).apply(pd.to_numeric, errors='ignore')
 
         df = pd.concat([df, df_params], axis=1)
@@ -236,14 +223,10 @@ class LoopTracer():
         def get_HM_wrapper(df_row):
             cap = df_row['capacitor']
 
-            # phase_correction = self.phase_correction
-            # phase_correction = self.phase_correction[cap] * 2 * np.pi / 360
-            # phase_correction = np.mean(self.phase_correction[cap]['diff'], axis=0)
             try:
-                # phase_correction = np.poly1d(self.phase_correction[cap][df_row.field])(df_row['lt-voltage'])
                 phase_correction = np.ones(df_row.repeats) * self.phase_correction[cap][df_row.field]
             except TypeError:
-                phase_correction = np.ones(df_row.repeats) * self.phase_correction
+                phase_correction = self.phase_correction
 
             except KeyError:
                 print(f'No calibration for {df_row.filename} - using zero')

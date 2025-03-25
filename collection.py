@@ -18,7 +18,7 @@ class Signal:
         self.y = y
         self.settings = settings
 
-        self.z = x + 1*y
+        self.z = x + 1j*y
         self.r = np.abs(self.z)
         self.p = np.angle(self.z)
 
